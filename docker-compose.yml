@@ -1,0 +1,105 @@
+version: "3.4"
+
+services:
+  members_core_database:
+    image: mysql
+    container_name: members_core_db
+    restart: always
+    command: --default-authentication-plugin=mysql_native_password --init-file /data/application/init.sql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      MYSQL_DATABASE: 'members'
+      MYSQL_USER: 'members_user'
+      MYSQL_PASSWORD: ${DB_ROOT_PASSWORD}
+    volumes:
+      - ${DB_HOST_PATH}:/var/lib/mysql
+      - ./docker/mysql/init.sql:/data/application/init.sql
+    ports:
+      - ${DB_HOST_PORT}:3306
+    networks:
+      - api
+
+  members_core_cache:
+    image: memcached
+    container_name: members_core_cache
+    ports:
+      - ${CACHE_HOST_PORT}:11211
+
+  members_core_elasticsearch:
+    image: elasticsearch:7.13.3
+    container_name: members_core_elasticsearch
+    ports:
+      - ${ELASTICSEARCH_HOST_PORT}:9200
+    environment:
+      discovery.type: single-node
+    networks:
+      - elastic
+
+  members_core_kibana:
+    image: kibana:7.13.3
+    container_name: members_core_kibana
+    ports:
+      - 5600:5601
+    environment:
+      ELASTICSEARCH_URL: http://members_core_elasticsearch:9200
+      ELASTICSEARCH_HOSTS: '["http://members_core_elasticsearch:9200"]'
+    networks:
+      - elastic
+    depends_on:
+      - members_core_elasticsearch
+
+  members_core_api:
+    build:
+      context: .
+      target: members_core_nginx
+    container_name: members_core_api
+    ports:
+      - 8002:80
+    links:
+      - members_core_php
+    volumes:
+      - ./api:/var/www/core
+    depends_on:
+      - members_core_php
+    networks:
+      - api
+
+  members_core_php:
+    build:
+      context: .
+      target: members_core_php
+    container_name: members_core_php
+    volumes:
+      - ./api:/var/www/core
+    depends_on:
+      - members_core_database
+      - members_core_cache
+      - members_core_elasticsearch
+    environment:
+      DB_HOST: members_core_database
+      DB_PORT: 3306
+      DB_USERNAME: root
+      DB_PASSWORD: ${DB_ROOT_PASSWORD}
+      CACHE_HOST: members_core_cache
+      CACHE_PORT: 11211
+      ES_HOST: http://members_core_elasticsearch
+      ES_PORT: ${ELASTICSEARCH_HOST_PORT}
+    networks:
+      - elastic
+      - api
+
+  members_core_composer:
+    image: composer:latest
+    container_name: members_core_composer
+    volumes:
+      - ./api:/var/www/core
+    working_dir: /var/www/core
+    command: composer install  --no-scripts
+
+networks:
+  elastic:
+    name: members_core_elastic_network
+    driver: bridge
+  api:
+    name: members_core_api_network
+    driver: bridge
